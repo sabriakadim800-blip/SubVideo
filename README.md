@@ -22,12 +22,19 @@ broad storage permissions.
   - timestamp-derived frame-rate estimate when it is not declared
 - UTF-8/UTF-16 aware SRT parsing, BOM removal, comma or period millisecond
   separators, and multiline cues
-- Font, size, text-color, subtitle placement, and watermark controls
+- XML screen in `app/src/main/res/layout/activity_main.xml` with its complete
+  interaction controller in `MainActivity.kt`
+- Arabic RTL interface with sky-blue/blue/white styling
+- Bundled Arabic subtitle fonts: Amiri, Almarai, and Noto Kufi Arabic
+- Font, size, text-color, live subtitle preview, subtitle placement, and
+  watermark controls
 - Surface-based `MediaCodec` decoder and encoder connected by an EGL/OpenGL
   compositor
 - `MediaMuxer` output with the original audio track copied through unchanged
 - Output written to the app's Movies directory and shareable through Android's
   system share sheet
+- GitHub Actions workflow at `.github/workflows/build-apk.yml` that builds and
+  uploads a debug APK on pushes, pull requests, or manual dispatch
 
 ## Rendering notes
 
