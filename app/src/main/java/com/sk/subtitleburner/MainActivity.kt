@@ -122,6 +122,7 @@ class MainActivity : Activity() {
         videoPreview.setMediaController(MediaController(this))
         videoPreview.setOnPreparedListener { player ->
             player.isLooping = false
+            player.start()
             previewEmptyText.visibility = View.GONE
             updateVideoPreviewOverlay()
         }

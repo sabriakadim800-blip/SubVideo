@@ -129,7 +129,7 @@ class FrameComposer(
         GLES20.glUniformMatrix4fv(matrix, 1, false, transform, 0)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)
-        drawQuad(position, texCoord, VIDEO_COORDS)
+        drawQuad(position, texCoord, VIDEO_TEXTURE_COORDS)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, 0)
     }
 
@@ -141,7 +141,7 @@ class FrameComposer(
         val texCoord = GLES20.glGetAttribLocation(overlayProgram, "aTexCoord")
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTextureId)
-        drawQuad(position, texCoord, VIDEO_COORDS)
+        drawQuad(position, texCoord, OVERLAY_TEXTURE_COORDS)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
         GLES20.glDisable(GLES20.GL_BLEND)
     }
@@ -282,7 +282,13 @@ class FrameComposer(
 
     companion object {
         private val QUAD_POSITIONS = floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)
-        private val VIDEO_COORDS = floatArrayOf(0f, 1f, 1f, 1f, 0f, 0f, 1f, 0f)
+        // SurfaceTexture already supplies the camera/decoder transform, including
+        // the usual vertical correction. Flipping these coordinates as well
+        // makes the decoded video appear upside down.
+        private val VIDEO_TEXTURE_COORDS = floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)
+        // Bitmap uploads have a top-left origin, so the overlay needs its own
+        // vertical flip to remain upright over the video.
+        private val OVERLAY_TEXTURE_COORDS = floatArrayOf(0f, 1f, 1f, 1f, 0f, 0f, 1f, 0f)
         private const val VIDEO_VERTEX = """
             attribute vec4 aPosition;
             attribute vec4 aTexCoord;

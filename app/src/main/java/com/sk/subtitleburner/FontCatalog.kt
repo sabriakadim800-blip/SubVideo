@@ -12,7 +12,11 @@ object FontCatalog {
     val options = listOf(
         SubtitleFont("أميري — Amiri", "fonts/Amiri-Regular.ttf"),
         SubtitleFont("المراي — Almarai", "fonts/Almarai-Regular.ttf"),
-        SubtitleFont("نوتو كوفي عربي — Noto Kufi Arabic", "fonts/NotoKufiArabic-Regular.ttf")
+        SubtitleFont("نوتو كوفي عربي — Noto Kufi Arabic", "fonts/NotoKufiArabic-Regular.ttf"),
+        SubtitleFont("مونتسيرات — Montserrat", "fonts/Montserrat-Regular.ttf"),
+        SubtitleFont("روبوتو — Roboto", "fonts/Roboto-Regular.ttf"),
+        SubtitleFont("أوبن سانس — Open Sans", "fonts/OpenSans-Regular.ttf"),
+        SubtitleFont("سينما — Cinema Regular", "fonts/Cinema-Regular.ttf")
     )
 
     val names: List<String> = options.map { it.label }
