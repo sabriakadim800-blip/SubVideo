@@ -4,7 +4,7 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
 import android.content.Context
-import kotlin.math.abs
+import kotlin.math.roundToInt
 
 data class VideoMetadata(
     val mime: String,
@@ -13,8 +13,33 @@ data class VideoMetadata(
     val fps: Double,
     val durationUs: Long,
     val videoTrack: Int,
-    val audioTrack: Int?
-)
+    val audioTrack: Int?,
+    val rotation: Int,
+    val pixelAspectRatio: Double
+) {
+    /**
+     * Dimensions used by the encoder after applying container rotation and
+     * non-square pixel aspect ratio metadata.
+     */
+    val renderWidth: Int
+        get() {
+            val orientedWidth = if (rotation == 90 || rotation == 270) height else width
+            val orientedHeight = if (rotation == 90 || rotation == 270) width else height
+            return evenDimension(orientedWidth * pixelAspectRatio, orientedHeight)
+        }
+
+    val renderHeight: Int
+        get() {
+            val orientedHeight = if (rotation == 90 || rotation == 270) width else height
+            return evenDimension(orientedHeight.toDouble(), orientedHeight)
+        }
+
+    private fun evenDimension(value: Double, reference: Int): Int {
+        val rounded = value.roundToInt().coerceAtLeast(2)
+        val even = if (rounded % 2 == 0) rounded else rounded + 1
+        return even.coerceAtMost(reference * 4)
+    }
+}
 
 object VideoProbe {
     fun inspect(context: Context, uri: Uri): VideoMetadata {
@@ -43,6 +68,23 @@ object VideoProbe {
             val declaredFps = if (videoFormat!!.containsKey(MediaFormat.KEY_FRAME_RATE)) {
                 videoFormat!!.getInteger(MediaFormat.KEY_FRAME_RATE).toDouble()
             } else 0.0
+            val rotation = if (videoFormat!!.containsKey(MediaFormat.KEY_ROTATION)) {
+                ((videoFormat!!.getInteger(MediaFormat.KEY_ROTATION) % 360) + 360) % 360
+            } else 0
+            val pixelAspectRatio = if (
+                videoFormat!!.containsKey(MediaFormat.KEY_PIXEL_ASPECT_RATIO_WIDTH) &&
+                videoFormat!!.containsKey(MediaFormat.KEY_PIXEL_ASPECT_RATIO_HEIGHT)
+            ) {
+                val aspectWidth = videoFormat!!.getInteger(MediaFormat.KEY_PIXEL_ASPECT_RATIO_WIDTH)
+                val aspectHeight = videoFormat!!.getInteger(MediaFormat.KEY_PIXEL_ASPECT_RATIO_HEIGHT)
+                if (aspectWidth > 0 && aspectHeight > 0) {
+                    aspectWidth.toDouble() / aspectHeight.toDouble()
+                } else {
+                    1.0
+                }
+            } else {
+                1.0
+            }
             val measuredFps = if (declaredFps > 0.0) declaredFps else measureFps(extractor, videoTrack)
             return VideoMetadata(
                 mime = videoFormat!!.getString(MediaFormat.KEY_MIME)!!,
@@ -51,7 +93,9 @@ object VideoProbe {
                 fps = measuredFps.coerceIn(1.0, 240.0),
                 durationUs = durationUs,
                 videoTrack = videoTrack,
-                audioTrack = audioTrack
+                audioTrack = audioTrack,
+                rotation = rotation,
+                pixelAspectRatio = pixelAspectRatio
             )
         } finally {
             extractor.release()

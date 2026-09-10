@@ -42,7 +42,11 @@ class VideoBurner(
             val audioFormat = metadata.audioTrack?.let { audioExtractor.getTrackFormat(it) }
             metadata.audioTrack?.let { audioExtractor.selectTrack(it) }
 
-            val encoderFormat = MediaFormat.createVideoFormat("video/avc", metadata.width, metadata.height).apply {
+            val encoderFormat = MediaFormat.createVideoFormat(
+                "video/avc",
+                metadata.renderWidth,
+                metadata.renderHeight
+            ).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
                 setInteger(MediaFormat.KEY_BIT_RATE, chooseBitrate())
                 setInteger(MediaFormat.KEY_FRAME_RATE, metadata.fps.roundToInt().coerceIn(1, 240))
@@ -54,11 +58,12 @@ class VideoBurner(
             val inputSurface = encoderInstance.createInputSurface()
             encoderInstance.start()
             val composerInstance = FrameComposer(
-                metadata.width,
-                metadata.height,
+                metadata.renderWidth,
+                metadata.renderHeight,
                 inputSurface,
                 options,
-                context.assets
+                context.assets,
+                metadata.rotation
             )
             composer = composerInstance
             val decoderSurface = composerInstance.decoderSurface
@@ -212,7 +217,7 @@ class VideoBurner(
     }
 
     private fun chooseBitrate(): Int {
-        val pixelsPerSecond = metadata.width.toLong() * metadata.height.toLong() * metadata.fps
+        val pixelsPerSecond = metadata.renderWidth.toLong() * metadata.renderHeight.toLong() * metadata.fps
         return pixelsPerSecond
             .times(0.10)
             .roundToInt()

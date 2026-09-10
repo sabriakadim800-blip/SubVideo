@@ -1,24 +1,34 @@
 package com.sk.subtitleburner
 
+import android.Manifest
 import android.app.Activity
+import android.content.ClipData
+import android.content.ContentValues
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
+import android.media.MediaScannerConnection
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
+import android.provider.MediaStore
 import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
+import android.widget.MediaController
 import android.widget.ProgressBar
 import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.TextView
+import android.widget.VideoView
 import androidx.core.content.FileProvider
 import java.io.File
+import java.io.FileInputStream
 import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.roundToInt
@@ -37,6 +47,8 @@ class MainActivity : Activity() {
     private var subtitleCues: List<SubtitleCue> = emptyList()
     private var metadata: VideoMetadata? = null
     private var lastOutput: File? = null
+    private var lastOutputUri: Uri? = null
+    private var pendingExportAfterPermission = false
 
     private lateinit var videoButton: Button
     private lateinit var subtitleButton: Button
@@ -47,6 +59,10 @@ class MainActivity : Activity() {
     private lateinit var sizeLabel: TextView
     private lateinit var colorSpinner: Spinner
     private lateinit var subtitlePreview: TextView
+    private lateinit var videoPreview: VideoView
+    private lateinit var previewEmptyText: TextView
+    private lateinit var previewSubtitle: TextView
+    private lateinit var previewWatermark: TextView
     private lateinit var watermarkCheck: CheckBox
     private lateinit var renderButton: Button
     private lateinit var exportProgress: ProgressBar
@@ -61,6 +77,13 @@ class MainActivity : Activity() {
         Color.rgb(151, 232, 255),
         Color.rgb(224, 228, 233)
     )
+    private val previewHandler = Handler(Looper.getMainLooper())
+    private val previewTicker = object : Runnable {
+        override fun run() {
+            updateVideoPreviewOverlay()
+            previewHandler.postDelayed(this, 120L)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -80,6 +103,10 @@ class MainActivity : Activity() {
         sizeLabel = findViewById(R.id.size_label)
         colorSpinner = findViewById(R.id.color_spinner)
         subtitlePreview = findViewById(R.id.subtitle_preview)
+        videoPreview = findViewById(R.id.video_preview)
+        previewEmptyText = findViewById(R.id.preview_empty_text)
+        previewSubtitle = findViewById(R.id.preview_subtitle)
+        previewWatermark = findViewById(R.id.preview_watermark)
         watermarkCheck = findViewById(R.id.watermark_check)
         renderButton = findViewById(R.id.render_button)
         exportProgress = findViewById(R.id.export_progress)
@@ -92,15 +119,29 @@ class MainActivity : Activity() {
         subtitleButton.setOnClickListener { openSubtitlePicker() }
         renderButton.setOnClickListener { startExport() }
         shareButton.setOnClickListener { shareLastExport() }
+        videoPreview.setMediaController(MediaController(this))
+        videoPreview.setOnPreparedListener { player ->
+            player.isLooping = false
+            previewEmptyText.visibility = View.GONE
+            updateVideoPreviewOverlay()
+        }
+        watermarkCheck.setOnCheckedChangeListener { _, _ -> updateVideoPreviewOverlay() }
 
         fontSpinner.adapter = spinnerAdapter(fontNames)
         colorSpinner.adapter = spinnerAdapter(colorNames)
-        fontSpinner.onItemSelectedListener = simpleItemSelected { updateSubtitlePreview() }
-        colorSpinner.onItemSelectedListener = simpleItemSelected { updateSubtitlePreview() }
+        fontSpinner.onItemSelectedListener = simpleItemSelected {
+            updateSubtitlePreview()
+            updateVideoPreviewOverlay()
+        }
+        colorSpinner.onItemSelectedListener = simpleItemSelected {
+            updateSubtitlePreview()
+            updateVideoPreviewOverlay()
+        }
         sizeSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 sizeLabel.text = "$progress بكسل"
                 updateSubtitlePreview()
+                updateVideoPreviewOverlay()
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
@@ -124,9 +165,29 @@ class MainActivity : Activity() {
     private fun updateSubtitlePreview() {
         if (!::subtitlePreview.isInitialized) return
         val fontName = fontNames.getOrElse(fontSpinner.selectedItemPosition) { fontNames.first() }
-        subtitlePreview.typeface = FontCatalog.loadTypeface(assets, fontName)
+        val selectedTypeface = FontCatalog.loadTypeface(assets, fontName)
+        subtitlePreview.typeface = selectedTypeface
+        previewSubtitle.typeface = selectedTypeface
+        previewWatermark.typeface = FontCatalog.loadTypeface(assets, "المراي — Almarai")
         subtitlePreview.textSize = sizeSeekBar.progress.toFloat()
-        subtitlePreview.setTextColor(colorValues.getOrElse(colorSpinner.selectedItemPosition) { Color.WHITE })
+        previewSubtitle.textSize = (sizeSeekBar.progress * 0.72f).coerceAtLeast(14f)
+        val selectedColor = colorValues.getOrElse(colorSpinner.selectedItemPosition) { Color.WHITE }
+        subtitlePreview.setTextColor(selectedColor)
+        previewSubtitle.setTextColor(selectedColor)
+    }
+
+    private fun updateVideoPreviewOverlay() {
+        if (!::videoPreview.isInitialized) return
+        previewWatermark.visibility =
+            if (videoUri != null && watermarkCheck.isChecked) View.VISIBLE else View.GONE
+        val currentPositionUs = try {
+            videoPreview.currentPosition.toLong() * 1000L
+        } catch (_: IllegalStateException) {
+            0L
+        }
+        val cue = subtitleCues.captionAt(currentPositionUs)
+        previewSubtitle.text = cue?.lines?.joinToString("\n").orEmpty()
+        previewSubtitle.visibility = if (cue == null) View.GONE else View.VISIBLE
     }
 
     private fun spinnerAdapter(items: List<String>): ArrayAdapter<String> {
@@ -208,12 +269,16 @@ class MainActivity : Activity() {
                 metadata = inspected
                 mainHandler.post {
                     videoInfo.text = buildString {
-                        append("${inspected.width} × ${inspected.height}")
+                        append("${inspected.renderWidth} × ${inspected.renderHeight}")
                         append("  •  ${formatFps(inspected.fps)} إطار/ث")
                         append("  •  ${formatDuration(inspected.durationUs)}")
                     }
                     statusText.text =
-                        "تم فحص المصدر. سيحافظ التصدير على ${inspected.width} × ${inspected.height}."
+                        "تم فحص المصدر. سيحافظ التصدير على ${inspected.renderWidth} × ${inspected.renderHeight} دون تدوير خاطئ."
+                    videoPreview.setVideoURI(uri)
+                    videoPreview.seekTo(1)
+                    previewEmptyText.visibility = View.VISIBLE
+                    updateVideoPreviewOverlay()
                     updateRenderButton()
                 }
             } catch (error: Throwable) {
@@ -277,6 +342,18 @@ class MainActivity : Activity() {
         val sourceUri = videoUri ?: return
         val sourceMetadata = metadata ?: return
         if (subtitleCues.isEmpty()) return
+        if (
+            Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+            checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingExportAfterPermission = true
+            requestPermissions(
+                arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                REQUEST_STORAGE_PERMISSION
+            )
+            statusText.text = "اسمح للتطبيق بحفظ الفيديو في المعرض."
+            return
+        }
 
         setExportRunning(true)
         statusText.text = "جارٍ تجهيز محرّك التصدير…"
@@ -288,6 +365,7 @@ class MainActivity : Activity() {
             "subtitle_burned_${System.currentTimeMillis()}.mp4"
         )
         lastOutput = output
+        lastOutputUri = null
         val options = BurnOptions(
             fontName = fontNames[fontSpinner.selectedItemPosition],
             fontSizePx = sizeSeekBar.progress,
@@ -310,11 +388,14 @@ class MainActivity : Activity() {
                         statusText.text = message
                     }
                 }.render()
+                val galleryUri = publishVideoToGallery(output)
+                lastOutputUri = galleryUri
+                output.delete()
 
                 mainHandler.post {
                     setExportRunning(false)
                     shareButton.visibility = View.VISIBLE
-                    statusText.text = "اكتمل التصدير. تم حفظ الفيديو في مجلد الأفلام."
+                    statusText.text = "اكتمل التصدير. تم حفظ الفيديو فعليًا في المعرض داخل مجلد الأفلام."
                 }
             } catch (error: Throwable) {
                 output.delete()
@@ -341,22 +422,89 @@ class MainActivity : Activity() {
 
     private fun shareLastExport() {
         val file = lastOutput ?: return
-        if (!file.exists()) {
+        val savedUri = lastOutputUri
+        if (savedUri == null && !file.exists()) {
             statusText.text = "لم يعد التصدير الأخير متاحًا."
             shareButton.visibility = View.GONE
             return
         }
-        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+        val uri = savedUri ?: FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
         startActivity(
             Intent.createChooser(
                 Intent(Intent.ACTION_SEND).apply {
                     type = "video/mp4"
                     putExtra(Intent.EXTRA_STREAM, uri)
+                    clipData = ClipData.newRawUri("video", uri)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 },
                 "مشاركة الفيديو المحروق"
             )
         )
+    }
+
+    private fun publishVideoToGallery(source: File): Uri {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Video.Media.DISPLAY_NAME, source.name)
+                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                put(
+                    MediaStore.Video.Media.RELATIVE_PATH,
+                    "${Environment.DIRECTORY_MOVIES}/حارق الترجمة"
+                )
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            }
+            val galleryUri = contentResolver.insert(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                values
+            ) ?: error("تعذر إنشاء ملف الفيديو في المعرض")
+            try {
+                contentResolver.openOutputStream(galleryUri)?.use { output ->
+                    FileInputStream(source).use { input -> input.copyTo(output) }
+                } ?: error("تعذر نسخ الفيديو إلى المعرض")
+                contentResolver.update(
+                    galleryUri,
+                    ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) },
+                    null,
+                    null
+                )
+                return galleryUri
+            } catch (error: Throwable) {
+                contentResolver.delete(galleryUri, null, null)
+                throw error
+            }
+        }
+
+        val publicMovies = Environment.getExternalStoragePublicDirectory(
+            Environment.DIRECTORY_MOVIES
+        )
+        val outputDirectory = File(publicMovies, "حارق الترجمة").apply { mkdirs() }
+        val publicFile = File(outputDirectory, source.name)
+        source.inputStream().use { input ->
+            publicFile.outputStream().use { output -> input.copyTo(output) }
+        }
+        MediaScannerConnection.scanFile(
+            this,
+            arrayOf(publicFile.absolutePath),
+            arrayOf("video/mp4"),
+            null
+        )
+        return FileProvider.getUriForFile(this, "$packageName.fileprovider", publicFile)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_STORAGE_PERMISSION) return
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED && pendingExportAfterPermission) {
+            pendingExportAfterPermission = false
+            startExport()
+        } else {
+            pendingExportAfterPermission = false
+            statusText.text = "لم يتم منح إذن الحفظ في المعرض."
+        }
     }
 
     private fun formatFps(value: Double): String {
@@ -368,12 +516,24 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        previewHandler.removeCallbacks(previewTicker)
         worker.shutdownNow()
         super.onDestroy()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        previewHandler.post(previewTicker)
+    }
+
+    override fun onPause() {
+        previewHandler.removeCallbacks(previewTicker)
+        super.onPause()
     }
 
     companion object {
         private const val REQUEST_VIDEO = 41
         private const val REQUEST_SUBTITLE = 42
+        private const val REQUEST_STORAGE_PERMISSION = 43
     }
 }

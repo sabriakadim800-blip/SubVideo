@@ -19,7 +19,8 @@ class FrameComposer(
     private val height: Int,
     encoderSurface: Surface,
     private val options: BurnOptions,
-    assets: AssetManager
+    assets: AssetManager,
+    private val rotationDegrees: Int
 ) {
     private val eglDisplay: EGLDisplay
     private val eglContext: EGLContext
@@ -85,10 +86,24 @@ class FrameComposer(
         surfaceTexture.updateTexImage()
         val transform = FloatArray(16)
         surfaceTexture.getTransformMatrix(transform)
+        val rotationTransform = FloatArray(16)
+        val combinedTransform = FloatArray(16)
+        android.opengl.Matrix.setIdentityM(rotationTransform, 0)
+        android.opengl.Matrix.translateM(rotationTransform, 0, 0.5f, 0.5f, 0f)
+        android.opengl.Matrix.rotateM(
+            rotationTransform,
+            0,
+            rotationDegrees.toFloat(),
+            0f,
+            0f,
+            1f
+        )
+        android.opengl.Matrix.translateM(rotationTransform, 0, -0.5f, -0.5f, 0f)
+        android.opengl.Matrix.multiplyMM(combinedTransform, 0, transform, 0, rotationTransform, 0)
         GLES20.glViewport(0, 0, width, height)
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-        drawVideo(transform)
+        drawVideo(combinedTransform)
         uploadOverlay(makeOverlay(cue))
         drawOverlay()
         EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, timestampUs * 1000L)
