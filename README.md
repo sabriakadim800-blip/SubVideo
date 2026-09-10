@@ -28,11 +28,15 @@ broad storage permissions.
 - Bundled Arabic subtitle fonts: Amiri, Almarai, and Noto Kufi Arabic
 - Font, size, text-color, live subtitle preview, subtitle placement, and
   watermark controls
+- Lightweight `VideoView` preview with time-synced SRT and watermark overlays
+- Finished exports are published to the device Gallery through `MediaStore`
+- Rotation and pixel-aspect-ratio metadata are applied before encoding so the
+  output keeps the source orientation and display proportions
 - Surface-based `MediaCodec` decoder and encoder connected by an EGL/OpenGL
   compositor
 - `MediaMuxer` output with the original audio track copied through unchanged
-- Output written to the app's Movies directory and shareable through Android's
-  system share sheet
+- Output published to the device's public Movies gallery through Android's
+  `MediaStore` and shareable through the system share sheet
 - GitHub Actions workflow at `.github/workflows/build-apk.yml` that builds and
   uploads a debug APK on pushes, pull requests, or manual dispatch
 
