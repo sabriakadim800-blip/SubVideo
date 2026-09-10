@@ -2,4 +2,7 @@
     <external-files-path
         name="movies"
         path="Movies/" />
+    <external-path
+        name="public_movies"
+        path="Movies/" />
 </paths>
