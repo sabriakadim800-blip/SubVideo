@@ -119,6 +119,15 @@ class MainActivity : Activity() {
         subtitleButton.setOnClickListener { openSubtitlePicker() }
         renderButton.setOnClickListener { startExport() }
         shareButton.setOnClickListener { shareLastExport() }
+        previewSubtitle.maxWidth =
+            (resources.displayMetrics.widthPixels * 0.88f).roundToInt()
+        previewSubtitle.isHorizontallyScrolling = false
+        previewSubtitle.includeFontPadding = false
+        previewSubtitle.breakStrategy = android.text.Layout.BREAK_STRATEGY_HIGH_QUALITY
+        previewSubtitle.hyphenationFrequency =
+            android.text.Layout.HYPHENATION_FREQUENCY_NONE
+        previewSubtitle.textDirection = View.TEXT_DIRECTION_FIRST_STRONG_RTL
+        previewSubtitle.setLineSpacing(0f, 1.12f)
         videoPreview.setMediaController(MediaController(this))
         videoPreview.setOnPreparedListener { player ->
             player.isLooping = false

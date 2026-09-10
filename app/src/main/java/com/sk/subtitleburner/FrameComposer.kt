@@ -3,11 +3,16 @@ package com.sk.subtitleburner
 import android.content.res.AssetManager
 import android.graphics.*
 import android.opengl.*
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextDirectionHeuristics
+import android.text.TextPaint
 import android.view.Surface
 import android.graphics.SurfaceTexture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /**
  * A small GLES compositor:
@@ -165,30 +170,51 @@ class FrameComposer(
     private fun makeOverlay(cue: SubtitleCue?): Bitmap {
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-        val densityScale = width / 1280f
         if (cue != null) {
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            val text = cue.lines.joinToString("\n")
+            val safeWidth = (width * 0.88f).roundToInt().coerceAtLeast(2)
+            val densityScale = width / 1280f
+            val requestedSize = options.fontSizePx * densityScale
+            val minimumSize = (width * 0.018f).coerceIn(18f, 32f)
+            val maximumSize = (width * 0.085f).coerceAtLeast(minimumSize)
+            var textSize = requestedSize.coerceIn(minimumSize, maximumSize)
+            var layout = createTextLayout(text, safeWidth, textSize)
+            val maximumSubtitleHeight = (height * 0.34f).roundToInt()
+
+            while (layout.height > maximumSubtitleHeight && textSize > minimumSize) {
+                textSize = (textSize - 1f).coerceAtLeast(minimumSize)
+                layout = createTextLayout(text, safeWidth, textSize)
+            }
+
+            val fillPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
                 typeface = subtitleTypeface
                 textLocale = Locale("ar")
-                textSize = options.fontSizePx * densityScale
-                textAlign = Paint.Align.CENTER
+                this.textSize = textSize
                 style = Paint.Style.FILL
                 color = options.textColor
                 setShadowLayer(3f * densityScale, 0f, 2f * densityScale, Color.BLACK)
             }
-            val stroke = Paint(paint).apply {
+            val strokePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                typeface = subtitleTypeface
+                textLocale = Locale("ar")
+                this.textSize = textSize
                 style = Paint.Style.STROKE
                 strokeWidth = maxOf(2f, textSize * 0.08f)
                 color = Color.argb(220, 0, 0, 0)
-                clearShadowLayer()
             }
-            val lineHeight = paint.textSize * 1.18f
-            val baselineStart = height - (height * 0.12f) - (cue.lines.size - 1) * lineHeight
-            cue.lines.forEachIndexed { index, line ->
-                val baseline = baselineStart + index * lineHeight
-                canvas.drawText(line, width / 2f, baseline, stroke)
-                canvas.drawText(line, width / 2f, baseline, paint)
-            }
+
+            val fillLayout = createTextLayout(text, safeWidth, textSize, fillPaint)
+            val strokeLayout = createTextLayout(text, safeWidth, textSize, strokePaint)
+            val left = ((width - safeWidth) / 2f).coerceAtLeast(0f)
+            val top = (
+                height - height * 0.12f - fillLayout.height
+            ).roundToInt().coerceAtLeast(8)
+
+            canvas.save()
+            canvas.translate(left, top.toFloat())
+            strokeLayout.draw(canvas)
+            fillLayout.draw(canvas)
+            canvas.restore()
         }
         if (options.includeWatermark) {
             val scale = width / 1280f
@@ -209,6 +235,30 @@ class FrameComposer(
             canvas.drawText("ترجمة فريق S.K", right - 4f * scale, top, watermark)
         }
         return bitmap
+    }
+
+    private fun createTextLayout(
+        text: String,
+        maxWidth: Int,
+        textSize: Float,
+        suppliedPaint: TextPaint? = null
+    ): StaticLayout {
+        val paint = suppliedPaint ?: TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = subtitleTypeface
+            textLocale = Locale("ar")
+            this.textSize = textSize
+            style = Paint.Style.FILL
+            color = options.textColor
+        }
+        return StaticLayout.Builder
+            .obtain(text, 0, text.length, paint, maxWidth)
+            .setAlignment(Layout.Alignment.ALIGN_CENTER)
+            .setIncludePad(false)
+            .setLineSpacing(0f, 1.12f)
+            .setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY)
+            .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
+            .setTextDirection(TextDirectionHeuristics.FIRSTSTRONG_RTL)
+            .build()
     }
 
     private fun uploadOverlay(bitmap: Bitmap) {
