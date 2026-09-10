@@ -3,10 +3,6 @@ package com.sk.subtitleburner
 import android.content.res.AssetManager
 import android.graphics.*
 import android.opengl.*
-import android.text.Layout
-import android.text.StaticLayout
-import android.text.TextDirectionHeuristics
-import android.text.TextPaint
 import android.view.Surface
 import android.graphics.SurfaceTexture
 import java.util.concurrent.CountDownLatch
@@ -178,43 +174,42 @@ class FrameComposer(
             val minimumSize = (width * 0.018f).coerceIn(18f, 32f)
             val maximumSize = (width * 0.085f).coerceAtLeast(minimumSize)
             var textSize = requestedSize.coerceIn(minimumSize, maximumSize)
-            var layout = createTextLayout(text, safeWidth, textSize)
-            val maximumSubtitleHeight = (height * 0.34f).roundToInt()
-
-            while (layout.height > maximumSubtitleHeight && textSize > minimumSize) {
-                textSize = (textSize - 1f).coerceAtLeast(minimumSize)
-                layout = createTextLayout(text, safeWidth, textSize)
-            }
-
-            val fillPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 typeface = subtitleTypeface
                 textLocale = Locale("ar")
                 this.textSize = textSize
+                textAlign = Paint.Align.CENTER
                 style = Paint.Style.FILL
                 color = options.textColor
                 setShadowLayer(3f * densityScale, 0f, 2f * densityScale, Color.BLACK)
             }
-            val strokePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            var wrappedLines = wrapLines(text, fillPaint, safeWidth.toFloat())
+            val maximumSubtitleHeight = (height * 0.34f).roundToInt()
+            while (
+                wrappedLines.size * fillPaint.textSize * 1.18f > maximumSubtitleHeight &&
+                textSize > minimumSize
+            ) {
+                textSize = (textSize - 1f).coerceAtLeast(minimumSize)
+                fillPaint.textSize = textSize
+                wrappedLines = wrapLines(text, fillPaint, safeWidth.toFloat())
+            }
+
+            val strokePaint = Paint(fillPaint).apply {
                 typeface = subtitleTypeface
                 textLocale = Locale("ar")
-                this.textSize = textSize
                 style = Paint.Style.STROKE
                 strokeWidth = maxOf(2f, textSize * 0.08f)
                 color = Color.argb(220, 0, 0, 0)
+                clearShadowLayer()
             }
-
-            val fillLayout = createTextLayout(text, safeWidth, textSize, fillPaint)
-            val strokeLayout = createTextLayout(text, safeWidth, textSize, strokePaint)
-            val left = ((width - safeWidth) / 2f).coerceAtLeast(0f)
-            val top = (
-                height - height * 0.12f - fillLayout.height
-            ).roundToInt().coerceAtLeast(8)
-
-            canvas.save()
-            canvas.translate(left, top.toFloat())
-            strokeLayout.draw(canvas)
-            fillLayout.draw(canvas)
-            canvas.restore()
+            val lineHeight = fillPaint.textSize * 1.18f
+            val baselineStart = height - (height * 0.12f) -
+                (wrappedLines.size - 1) * lineHeight
+            wrappedLines.forEachIndexed { index, line ->
+                val baseline = baselineStart + index * lineHeight
+                canvas.drawText(line, width / 2f, baseline, strokePaint)
+                canvas.drawText(line, width / 2f, baseline, fillPaint)
+            }
         }
         if (options.includeWatermark) {
             val scale = width / 1280f
@@ -237,28 +232,57 @@ class FrameComposer(
         return bitmap
     }
 
-    private fun createTextLayout(
+    private fun wrapLines(
         text: String,
-        maxWidth: Int,
-        textSize: Float,
-        suppliedPaint: TextPaint? = null
-    ): StaticLayout {
-        val paint = suppliedPaint ?: TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            typeface = subtitleTypeface
-            textLocale = Locale("ar")
-            this.textSize = textSize
-            style = Paint.Style.FILL
-            color = options.textColor
+        paint: Paint,
+        maxWidth: Float
+    ): List<String> {
+        val result = ArrayList<String>()
+        text.split('\n').forEach { paragraph ->
+            val words = paragraph.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+            if (words.isEmpty()) return@forEach
+            var current = ""
+            words.forEach { word ->
+                val candidate = if (current.isEmpty()) word else "$current $word"
+                if (paint.measureText(candidate) <= maxWidth) {
+                    current = candidate
+                } else {
+                    if (current.isNotEmpty()) result += current
+                    if (paint.measureText(word) <= maxWidth) {
+                        current = word
+                    } else {
+                        val pieces = splitLongWord(word, paint, maxWidth)
+                        if (pieces.isNotEmpty()) {
+                            result.addAll(pieces.dropLast(1))
+                            current = pieces.last()
+                        }
+                    }
+                }
+            }
+            if (current.isNotEmpty()) result += current
         }
-        return StaticLayout.Builder
-            .obtain(text, 0, text.length, paint, maxWidth)
-            .setAlignment(Layout.Alignment.ALIGN_CENTER)
-            .setIncludePad(false)
-            .setLineSpacing(0f, 1.12f)
-            .setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY)
-            .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
-            .setTextDirection(TextDirectionHeuristics.FIRSTSTRONG_RTL)
-            .build()
+        return result.ifEmpty { listOf(text) }
+    }
+
+    private fun splitLongWord(
+        word: String,
+        paint: Paint,
+        maxWidth: Float
+    ): List<String> {
+        val pieces = ArrayList<String>()
+        var remaining = word
+        while (remaining.isNotEmpty()) {
+            var length = 1
+            while (
+                length < remaining.length &&
+                paint.measureText(remaining.substring(0, length + 1)) <= maxWidth
+            ) {
+                length++
+            }
+            pieces += remaining.substring(0, length)
+            remaining = remaining.substring(length)
+        }
+        return pieces
     }
 
     private fun uploadOverlay(bitmap: Bitmap) {
