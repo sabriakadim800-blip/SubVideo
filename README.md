@@ -25,7 +25,8 @@ broad storage permissions.
 - XML screen in `app/src/main/res/layout/activity_main.xml` with its complete
   interaction controller in `MainActivity.kt`
 - Arabic RTL interface with sky-blue/blue/white styling
-- Bundled Arabic subtitle fonts: Amiri, Almarai, and Noto Kufi Arabic
+- Bundled subtitle fonts: Amiri, Almarai, Noto Kufi Arabic, Montserrat, Roboto,
+  Open Sans, and Cinema Regular
 - Font, size, text-color, live subtitle preview, subtitle placement, and
   watermark controls
 - Lightweight `VideoView` preview with time-synced SRT and watermark overlays
